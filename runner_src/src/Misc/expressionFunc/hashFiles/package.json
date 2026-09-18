@@ -1,0 +1,51 @@
+{
+  "name": "hashFiles",
+  "version": "1.0.0",
+  "description": "GitHub Actions HashFiles() expression function",
+  "main": "lib/hashFiles.js",
+  "scripts": {
+    "build": "tsc",
+    "format": "prettier --write **/*.ts",
+    "format-check": "prettier --check **/*.ts",
+    "lint": "eslint src/**/*.ts",
+    "pack": "ncc build -o ../../layoutbin/hashFiles",
+    "all": "npm run format && npm run lint && npm run build && npm run pack",
+    "prepare": "cd ../../../../ && husky"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/actions/runner.git"
+  },
+  "keywords": [
+    "actions"
+  ],
+  "lint-staged": {
+    "*.md": [
+      "prettier --write",
+      "git add ."
+    ],
+    "*.{ts,json}": [
+      "sh -c 'npm run all'",
+      "git add ."
+    ]
+  },
+  "author": "GitHub Actions",
+  "license": "MIT",
+  "dependencies": {
+    "@actions/glob": "^0.7.0"
+  },
+  "devDependencies": {
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.70.0",
+    "@typescript-eslint/parser": "^8.70.0",
+    "@vercel/ncc": "^0.45.0",
+    "eslint": "^8.47.0",
+    "eslint-plugin-github": "^6.1.2",
+    "eslint-plugin-prettier": "^5.0.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.5.1",
+    "prettier": "^3.0.3",
+    "typescript": "^6.0.3"
+  }
+}

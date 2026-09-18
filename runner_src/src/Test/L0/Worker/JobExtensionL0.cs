@@ -1,0 +1,1110 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+using GitHub.DistributedTask.ObjectTemplating.Tokens;
+using GitHub.DistributedTask.Pipelines.ObjectTemplating;
+using GitHub.DistributedTask.WebApi;
+using GitHub.Runner.Worker;
+using GitHub.Runner.Worker.Dap;
+using Moq;
+using Xunit;
+using Pipelines = GitHub.DistributedTask.Pipelines;
+
+namespace GitHub.Runner.Common.Tests.Worker
+{
+    public sealed class JobExtensionL0
+    {
+        private IExecutionContext _jobEc;
+        private Pipelines.AgentJobRequestMessage _message;
+
+        private Mock<IPipelineDirectoryManager> _directoryManager;
+        private Mock<IActionManager> _actionManager;
+        private Mock<IJobServerQueue> _jobServerQueue;
+        private Mock<IConfigurationStore> _config;
+        private Mock<IPagingLogger> _logger;
+        private Mock<IContainerOperationProvider> _containerProvider;
+        private Mock<IDiagnosticLogManager> _diagnosticLogManager;
+        private Mock<IJobHookProvider> _jobHookProvider;
+        private Mock<ISnapshotOperationProvider> _snapshotOperationProvider;
+
+        private Pipelines.Snapshot _requestedSnapshot;
+
+        private CancellationTokenSource _tokenSource;
+        private TestHostContext CreateTestContext([CallerMemberName] String testName = "")
+        {
+            var hc = new TestHostContext(this, testName);
+            _jobEc = new Runner.Worker.ExecutionContext();
+            _actionManager = new Mock<IActionManager>();
+            _jobServerQueue = new Mock<IJobServerQueue>();
+            _config = new Mock<IConfigurationStore>();
+            _logger = new Mock<IPagingLogger>();
+            _containerProvider = new Mock<IContainerOperationProvider>();
+            _diagnosticLogManager = new Mock<IDiagnosticLogManager>();
+            _directoryManager = new Mock<IPipelineDirectoryManager>();
+            _directoryManager.Setup(x => x.PrepareDirectory(It.IsAny<IExecutionContext>(), It.IsAny<Pipelines.WorkspaceOptions>()))
+                             .Returns(new TrackingConfig() { PipelineDirectory = "runner", WorkspaceDirectory = "runner/runner" });
+            _jobHookProvider = new Mock<IJobHookProvider>();
+            _snapshotOperationProvider = new Mock<ISnapshotOperationProvider>();
+
+            _requestedSnapshot = null;
+            _snapshotOperationProvider
+                .Setup(p => p.CreateSnapshotRequestAsync(It.IsAny<IExecutionContext>(), It.IsAny<Pipelines.Snapshot>()))
+                .Returns((IExecutionContext _, object data) =>
+                {
+                    _requestedSnapshot = data as Pipelines.Snapshot;
+                    return Task.CompletedTask;
+                });
+            IActionRunner step1 = new ActionRunner();
+            IActionRunner step2 = new ActionRunner();
+            IActionRunner step3 = new ActionRunner();
+            IActionRunner step4 = new ActionRunner();
+            IActionRunner step5 = new ActionRunner();
+
+            _logger.Setup(x => x.Setup(It.IsAny<Guid>(), It.IsAny<Guid>()));
+            var settings = new RunnerSettings
+            {
+                AgentId = 1,
+                AgentName = "runner",
+                ServerUrl = "https://pipelines.actions.githubusercontent.com/abcd",
+                WorkFolder = "_work",
+            };
+
+            _config.Setup(x => x.GetSettings())
+                .Returns(settings);
+
+            if (_tokenSource != null)
+            {
+                _tokenSource.Dispose();
+                _tokenSource = null;
+            }
+
+            _tokenSource = new CancellationTokenSource();
+            TaskOrchestrationPlanReference plan = new();
+            TimelineReference timeline = new Timeline(Guid.NewGuid());
+
+            List<Pipelines.ActionStep> steps = new()
+            {
+                new Pipelines.ActionStep()
+                {
+                    Id = Guid.NewGuid(),
+                    DisplayName = "action1",
+                },
+                new Pipelines.ActionStep()
+                {
+                    Id = Guid.NewGuid(),
+                    DisplayName = "action2",
+                },
+                new Pipelines.ActionStep()
+                {
+                    Id = Guid.NewGuid(),
+                    DisplayName = "action3",
+                },
+                new Pipelines.ActionStep()
+                {
+                    Id = Guid.NewGuid(),
+                    DisplayName = "action4",
+                },
+                new Pipelines.ActionStep()
+                {
+                    Id = Guid.NewGuid(),
+                    DisplayName = "action5",
+                }
+            };
+
+            Guid jobId = Guid.NewGuid();
+            _message = new Pipelines.AgentJobRequestMessage(plan, timeline, jobId, "test", "test", null, null, null, new Dictionary<string, VariableValue>(), new List<MaskHint>(), new Pipelines.JobResources(), new Pipelines.ContextData.DictionaryContextData(), new Pipelines.WorkspaceOptions(), steps, null, null, null, null, null);
+            GitHubContext github = new();
+            github["repository"] = new Pipelines.ContextData.StringContextData("actions/runner");
+            github["secret_source"] = new Pipelines.ContextData.StringContextData("Actions");
+            _message.ContextData.Add("github", github);
+            _message.Resources.Endpoints.Add(new ServiceEndpoint()
+            {
+                Name = WellKnownServiceEndpointNames.SystemVssConnection,
+                Url = new Uri("https://pipelines.actions.githubusercontent.com"),
+                Authorization = new EndpointAuthorization()
+                {
+                    Scheme = "Test",
+                    Parameters = {
+                        {"AccessToken", "token"}
+                    }
+                },
+            });
+
+            hc.SetSingleton(_actionManager.Object);
+            hc.SetSingleton(_config.Object);
+            hc.SetSingleton(_jobServerQueue.Object);
+            hc.SetSingleton(_containerProvider.Object);
+            hc.SetSingleton(_directoryManager.Object);
+            hc.SetSingleton(_diagnosticLogManager.Object);
+            hc.SetSingleton(_jobHookProvider.Object);
+            hc.SetSingleton(_snapshotOperationProvider.Object);
+            hc.EnqueueInstance<IPagingLogger>(_logger.Object); // JobExecutionContext
+            hc.EnqueueInstance<IPagingLogger>(_logger.Object); // job start hook
+            hc.EnqueueInstance<IPagingLogger>(_logger.Object); // Initial Job
+            hc.EnqueueInstance<IPagingLogger>(_logger.Object); // step1
+            hc.EnqueueInstance<IPagingLogger>(_logger.Object); // step2
+            hc.EnqueueInstance<IPagingLogger>(_logger.Object); // step3
+            hc.EnqueueInstance<IPagingLogger>(_logger.Object); // step4
+            hc.EnqueueInstance<IPagingLogger>(_logger.Object); // step5
+            hc.EnqueueInstance<IPagingLogger>(_logger.Object); // prepare1
+            hc.EnqueueInstance<IPagingLogger>(_logger.Object); // prepare2
+            hc.EnqueueInstance<IPagingLogger>(_logger.Object); // job complete hook
+
+            hc.EnqueueInstance<IActionRunner>(step1);
+            hc.EnqueueInstance<IActionRunner>(step2);
+            hc.EnqueueInstance<IActionRunner>(step3);
+            hc.EnqueueInstance<IActionRunner>(step4);
+            hc.EnqueueInstance<IActionRunner>(step5);
+
+            _jobEc.Initialize(hc);
+            _jobEc.InitializeJob(_message, _tokenSource.Token);
+            return hc;
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task JobExtensionBuildStepsList()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                List<IStep> result = await jobExtension.InitializeJob(_jobEc, _message);
+
+                var trace = hc.GetTrace();
+
+                trace.Info(string.Join(", ", result.Select(x => x.DisplayName)));
+
+                Assert.Equal(5, result.Count);
+
+                Assert.Equal("action1", result[0].DisplayName);
+                Assert.Equal("action2", result[1].DisplayName);
+                Assert.Equal("action3", result[2].DisplayName);
+                Assert.Equal("action4", result[3].DisplayName);
+                Assert.Equal("action5", result[4].DisplayName);
+
+                Assert.NotNull(result[0].ExecutionContext);
+                Assert.NotNull(result[1].ExecutionContext);
+                Assert.NotNull(result[2].ExecutionContext);
+                Assert.NotNull(result[3].ExecutionContext);
+                Assert.NotNull(result[4].ExecutionContext);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task JobExtensionOutputsLockedDependenciesWhenPresent()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var consoleLines = new List<string>();
+                _jobServerQueue.Setup(x => x.QueueWebConsoleLine(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<long?>()))
+                               .Callback((Guid _, string line, long? __) => consoleLines.Add(line));
+
+                _message.ActionsDependencies.Add("actions/checkout@v4:sha256-abc123");
+
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                await jobExtension.InitializeJob(_jobEc, _message);
+
+                Assert.Contains(consoleLines, line => line.Contains("Using locked action versions from the workflow's lockfile"));
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task JobExtensionDoesNotOutputLockedDependenciesWhenAbsent()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var consoleLines = new List<string>();
+                _jobServerQueue.Setup(x => x.QueueWebConsoleLine(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<long?>()))
+                               .Callback((Guid _, string line, long? __) => consoleLines.Add(line));
+
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                await jobExtension.InitializeJob(_jobEc, _message);
+
+                Assert.DoesNotContain(consoleLines, line => line.Contains("Using locked action versions from the workflow's lockfile"));
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task JobExtensionBuildPreStepsList()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>() { new JobExtensionRunner(null, "", "prepare1", null), new JobExtensionRunner(null, "", "prepare2", null) }, new Dictionary<Guid, IActionRunner>())));
+
+                List<IStep> result = await jobExtension.InitializeJob(_jobEc, _message);
+
+                var trace = hc.GetTrace();
+
+                trace.Info(string.Join(", ", result.Select(x => x.DisplayName)));
+
+                Assert.Equal(7, result.Count);
+
+                Assert.Equal("prepare1", result[0].DisplayName);
+                Assert.Equal("prepare2", result[1].DisplayName);
+                Assert.Equal("action1", result[2].DisplayName);
+                Assert.Equal("action2", result[3].DisplayName);
+                Assert.Equal("action3", result[4].DisplayName);
+                Assert.Equal("action4", result[5].DisplayName);
+                Assert.Equal("action5", result[6].DisplayName);
+
+                Assert.NotNull(result[0].ExecutionContext);
+                Assert.NotNull(result[1].ExecutionContext);
+                Assert.NotNull(result[2].ExecutionContext);
+                Assert.NotNull(result[3].ExecutionContext);
+                Assert.NotNull(result[4].ExecutionContext);
+                Assert.NotNull(result[5].ExecutionContext);
+                Assert.NotNull(result[6].ExecutionContext);
+            }
+        }
+
+        [Theory]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        [InlineData("read")]
+        [InlineData("none")]
+        [InlineData("write")]
+        [InlineData("write-only")]
+        public async Task InitializeJob_LogsCacheMode_WhenVariableSet(string mode)
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                _jobEc.Global.Variables.Set("actions_cache_mode", mode);
+
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                await jobExtension.InitializeJob(_jobEc, _message);
+
+                _jobServerQueue.Verify(
+                    x => x.QueueWebConsoleLine(It.IsAny<Guid>(), It.Is<string>(m => m.Contains($"Cache mode: {mode}")), It.IsAny<long?>()),
+                    Times.Once);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task InitializeJob_DoesNotLogCacheMode_WhenVariableAbsent()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                await jobExtension.InitializeJob(_jobEc, _message);
+
+                _jobServerQueue.Verify(
+                    x => x.QueueWebConsoleLine(It.IsAny<Guid>(), It.Is<string>(m => m.Contains("Cache mode:")), It.IsAny<long?>()),
+                    Times.Never);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task JobExtensionBuildFailsWithoutContainerIfRequired()
+        {
+            Environment.SetEnvironmentVariable(Constants.Variables.Actions.RequireJobContainer, "true");
+            try
+            {
+                using (TestHostContext hc = CreateTestContext())
+                {
+                    var jobExtension = new JobExtension();
+                    jobExtension.Initialize(hc);
+
+                    _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                                  .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>() { new JobExtensionRunner(null, "", "prepare1", null), new JobExtensionRunner(null, "", "prepare2", null) }, new Dictionary<Guid, IActionRunner>())));
+
+                    await Assert.ThrowsAsync<ArgumentException>(() => jobExtension.InitializeJob(_jobEc, _message));
+                }
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(Constants.Variables.Actions.RequireJobContainer, null);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task UploadDiganosticLogIfEnvironmentVariableSet()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _message.Variables[Constants.Variables.Actions.RunnerDebug] = "true";
+
+                _jobEc = new Runner.Worker.ExecutionContext();
+                _jobEc.Initialize(hc);
+                _jobEc.InitializeJob(_message, _tokenSource.Token);
+
+                await jobExtension.FinalizeJob(_jobEc, _message, DateTime.UtcNow);
+
+                _diagnosticLogManager.Verify(x =>
+                    x.UploadDiagnosticLogs(
+                        It.IsAny<IExecutionContext>(),
+                        It.IsAny<IExecutionContext>(),
+                        It.IsAny<Pipelines.AgentJobRequestMessage>(),
+                        It.IsAny<DateTime>()),
+                    Times.Once);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task DontUploadDiagnosticLogIfEnvironmentVariableFalse()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _message.Variables[Constants.Variables.Actions.RunnerDebug] = "false";
+
+                _jobEc = new Runner.Worker.ExecutionContext();
+                _jobEc.Initialize(hc);
+                _jobEc.InitializeJob(_message, _tokenSource.Token);
+
+                await jobExtension.FinalizeJob(_jobEc, _message, DateTime.UtcNow);
+
+                _diagnosticLogManager.Verify(x =>
+                    x.UploadDiagnosticLogs(
+                        It.IsAny<IExecutionContext>(),
+                        It.IsAny<IExecutionContext>(),
+                        It.IsAny<Pipelines.AgentJobRequestMessage>(),
+                        It.IsAny<DateTime>()),
+                    Times.Never);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task DontUploadDiagnosticLogIfEnvironmentVariableMissing()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                await jobExtension.FinalizeJob(_jobEc, _message, DateTime.UtcNow);
+
+                _diagnosticLogManager.Verify(x =>
+                    x.UploadDiagnosticLogs(
+                        It.IsAny<IExecutionContext>(),
+                        It.IsAny<IExecutionContext>(),
+                        It.IsAny<Pipelines.AgentJobRequestMessage>(),
+                        It.IsAny<DateTime>()),
+                    Times.Never);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task EnsureFinalizeJobRunsIfMessageHasNoEnvironmentUrl()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _message.ActionsEnvironment = new ActionsEnvironmentReference("production");
+
+                _jobEc = new Runner.Worker.ExecutionContext { Result = TaskResult.Succeeded };
+                _jobEc.Initialize(hc);
+                _jobEc.InitializeJob(_message, _tokenSource.Token);
+
+                await jobExtension.FinalizeJob(_jobEc, _message, DateTime.UtcNow);
+
+                Assert.Equal(TaskResult.Succeeded, _jobEc.Result);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task EnsureFinalizeJobHandlesNullEnvironmentUrl()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _message.ActionsEnvironment = new ActionsEnvironmentReference("production")
+                {
+                    Url = null
+                };
+
+                _jobEc = new Runner.Worker.ExecutionContext { Result = TaskResult.Succeeded };
+                _jobEc.Initialize(hc);
+                _jobEc.InitializeJob(_message, _tokenSource.Token);
+
+                await jobExtension.FinalizeJob(_jobEc, _message, DateTime.UtcNow);
+
+                Assert.Equal(TaskResult.Succeeded, _jobEc.Result);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task EnsureFinalizeJobHandlesNullEnvironment()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _message.ActionsEnvironment = null;
+
+                _jobEc = new Runner.Worker.ExecutionContext { Result = TaskResult.Succeeded };
+                _jobEc.Initialize(hc);
+                _jobEc.InitializeJob(_message, _tokenSource.Token);
+
+                await jobExtension.FinalizeJob(_jobEc, _message, DateTime.UtcNow);
+
+                Assert.Equal(TaskResult.Succeeded, _jobEc.Result);
+            }
+        }
+
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task EnsurePreAndPostHookStepsIfEnvExists()
+        {
+            Environment.SetEnvironmentVariable("ACTIONS_RUNNER_HOOK_JOB_STARTED", "/foo/bar");
+            Environment.SetEnvironmentVariable("ACTIONS_RUNNER_HOOK_JOB_COMPLETED", "/bar/foo");
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                List<IStep> result = await jobExtension.InitializeJob(_jobEc, _message);
+
+                var trace = hc.GetTrace();
+
+                var hookStart = result.First() as JobExtensionRunner;
+
+                await jobExtension.FinalizeJob(_jobEc, _message, DateTime.UtcNow);
+
+                Assert.Equal(Constants.Hooks.JobStartedStepName, hookStart.DisplayName);
+                Assert.Equal(Constants.Hooks.JobCompletedStepName, (_jobEc.PostJobSteps.Last() as JobExtensionRunner).DisplayName);
+            }
+
+            Environment.SetEnvironmentVariable("ACTIONS_RUNNER_HOOK_JOB_STARTED", null);
+            Environment.SetEnvironmentVariable("ACTIONS_RUNNER_HOOK_JOB_COMPLETED", null);
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task EnsureNoPreAndPostHookSteps()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _message.ActionsEnvironment = null;
+
+                _jobEc = new Runner.Worker.ExecutionContext { Result = TaskResult.Succeeded };
+                _jobEc.Initialize(hc);
+                _jobEc.InitializeJob(_message, _tokenSource.Token);
+
+                var x = _jobEc.JobSteps;
+
+                await jobExtension.FinalizeJob(_jobEc, _message, DateTime.UtcNow);
+
+                Assert.Equal(TaskResult.Succeeded, _jobEc.Result);
+                Assert.Equal(0, _jobEc.PostJobSteps.Count);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task EnsureNoSnapshotPostJobStep()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                    .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                _message.Snapshot = null;
+                await jobExtension.InitializeJob(_jobEc, _message);
+
+                var postJobSteps = _jobEc.PostJobSteps;
+                Assert.Equal(0, postJobSteps.Count);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public Task EnsureSnapshotPostJobStepForStringToken()
+        {
+            var snapshot = new Pipelines.Snapshot("TestImageNameFromStringToken");
+            var imageNameValueStringToken = new StringToken(null, null, null, snapshot.ImageName);
+            return EnsureSnapshotPostJobStepForToken(imageNameValueStringToken, snapshot);
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public Task EnsureSnapshotPostJobStepForMappingToken()
+        {
+            var snapshot = new Pipelines.Snapshot("TestImageNameFromMappingToken");
+            var imageNameValueStringToken = new StringToken(null, null, null, snapshot.ImageName);
+            var mappingToken = new MappingToken(null, null, null)
+            {
+                { new StringToken(null,null,null, PipelineTemplateConstants.ImageName), imageNameValueStringToken }
+            };
+
+            return EnsureSnapshotPostJobStepForToken(mappingToken, snapshot);
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public Task EnsureSnapshotPostJobStepForMappingToken_WithIf_Is_False()
+        {
+            var snapshot = new Pipelines.Snapshot("TestImageNameFromMappingToken", condition: $"{PipelineTemplateConstants.Success}() && 1==0", version: "2.*");
+            var imageNameValueStringToken = new StringToken(null, null, null, snapshot.ImageName);
+            var condition = new StringToken(null, null, null, snapshot.Condition);
+            var version = new StringToken(null, null, null, snapshot.Version);
+
+            var mappingToken = new MappingToken(null, null, null)
+            {
+                { new StringToken(null,null,null, PipelineTemplateConstants.ImageName), imageNameValueStringToken },
+                { new StringToken(null,null,null, PipelineTemplateConstants.If), condition },
+                { new StringToken(null,null,null, PipelineTemplateConstants.CustomImageVersion), version }
+            };
+
+            return EnsureSnapshotPostJobStepForToken(mappingToken, snapshot, skipSnapshotStep: true);
+        }
+
+        private async Task EnsureSnapshotPostJobStepForToken(TemplateToken snapshotToken, Pipelines.Snapshot expectedSnapshot, bool skipSnapshotStep = false)
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                    .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                _message.Snapshot = snapshotToken;
+
+                await jobExtension.InitializeJob(_jobEc, _message);
+
+                var postJobSteps = _jobEc.PostJobSteps;
+
+                Assert.Equal(1, postJobSteps.Count);
+                var snapshotStep = postJobSteps.First();
+                _jobEc.JobSteps.Enqueue(snapshotStep);
+
+                var _stepsRunner = new StepsRunner();
+                _stepsRunner.Initialize(hc);
+
+                var bgCoordinator = new BackgroundStepCoordinator();
+                bgCoordinator.Initialize(hc);
+                hc.SetSingleton<IBackgroundStepCoordinator>(bgCoordinator);
+
+                var mockDapDebugger = new Mock<IDapDebugger>();
+                hc.SetSingleton(mockDapDebugger.Object);
+
+                await _stepsRunner.RunAsync(_jobEc);
+
+                Assert.Equal("Create custom image", snapshotStep.DisplayName);
+                Assert.Equal(expectedSnapshot.Condition ?? $"{PipelineTemplateConstants.Success}()", snapshotStep.Condition);
+
+                // Run the mock snapshot step, so we can verify it was executed with the expected snapshot object.
+                // await snapshotStep.RunAsync();
+                if (skipSnapshotStep)
+                {
+                    Assert.Null(_requestedSnapshot);
+                }
+                else
+                {
+                    Assert.NotNull(_requestedSnapshot);
+                    Assert.Equal(expectedSnapshot.ImageName, _requestedSnapshot.ImageName);
+                    Assert.Equal(expectedSnapshot.Condition ?? $"{PipelineTemplateConstants.Success}()", _requestedSnapshot.Condition);
+                    Assert.Equal(expectedSnapshot.Version ?? "1.*", _requestedSnapshot.Version);
+                }
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task SnapshotPreflightChecks_HostedRunnerCheck_Enabled_GitHubHosted_Success()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                _jobEc.Global.Variables.Set(WellKnownDistributedTaskVariables.RunnerEnvironment, "github-hosted");
+
+                hc.SetSingleton<ISnapshotOperationProvider>(new SnapshotOperationProvider());
+                _jobEc.Global.Variables.Set(Constants.Runner.Features.SnapshotPreflightHostedRunnerCheck, "true");
+
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+
+                var snapshot = new Pipelines.Snapshot("TestImageNameForPreflightCheck");
+                var imageNameValueStringToken = new StringToken(null, null, null, snapshot.ImageName);
+                _message.Snapshot = imageNameValueStringToken;
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                    .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                await jobExtension.InitializeJob(_jobEc, _message);
+
+                var postJobSteps = _jobEc.PostJobSteps;
+                Assert.Equal(1, postJobSteps.Count);
+            }
+
+            Environment.SetEnvironmentVariable("RUNNER_ENVIRONMENT", null);
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task SnapshotPreflightChecks_HostedRunnerCheck_Enabled_SelfHosted_ThrowsException()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                _jobEc.Global.Variables.Set(WellKnownDistributedTaskVariables.RunnerEnvironment, "self-hosted");
+                hc.SetSingleton<ISnapshotOperationProvider>(new SnapshotOperationProvider());
+
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _jobEc.Global.Variables.Set(Constants.Runner.Features.SnapshotPreflightHostedRunnerCheck, "true");
+
+                var snapshot = new Pipelines.Snapshot("TestImageNameForPreflightCheck");
+                var imageNameValueStringToken = new StringToken(null, null, null, snapshot.ImageName);
+                _message.Snapshot = imageNameValueStringToken;
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                    .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                var exception = await Assert.ThrowsAsync<ArgumentException>(() => jobExtension.InitializeJob(_jobEc, _message));
+                Assert.Contains("Snapshot workflows must be run on a GitHub Hosted Runner", exception.Message);
+            }
+
+            Environment.SetEnvironmentVariable("RUNNER_ENVIRONMENT", null);
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task SnapshotPreflightChecks_ImageGenPoolCheck_Enabled_ImageGenEnabled_Success()
+        {
+            Environment.SetEnvironmentVariable("GITHUB_ACTIONS_IMAGE_GEN_ENABLED", "true");
+
+            using (TestHostContext hc = CreateTestContext())
+            {
+                hc.SetSingleton<ISnapshotOperationProvider>(new SnapshotOperationProvider());
+
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _jobEc.Global.Variables.Set(Constants.Runner.Features.SnapshotPreflightImageGenPoolCheck, "true");
+
+                var snapshot = new Pipelines.Snapshot("TestImageNameForPreflightCheck");
+                var imageNameValueStringToken = new StringToken(null, null, null, snapshot.ImageName);
+                _message.Snapshot = imageNameValueStringToken;
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                    .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                await jobExtension.InitializeJob(_jobEc, _message);
+
+                var postJobSteps = _jobEc.PostJobSteps;
+                Assert.Equal(1, postJobSteps.Count);
+            }
+
+            Environment.SetEnvironmentVariable("GITHUB_ACTIONS_IMAGE_GEN_ENABLED", null);
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task SnapshotPreflightChecks_ImageGenPoolCheck_Enabled_ImageGen_False_ThrowsException()
+        {
+            Environment.SetEnvironmentVariable("GITHUB_ACTIONS_IMAGE_GEN_ENABLED", "false");
+
+            using (TestHostContext hc = CreateTestContext())
+            {
+                hc.SetSingleton<ISnapshotOperationProvider>(new SnapshotOperationProvider());
+                _jobEc.SetRunnerContext("environment", "github-hosted");
+
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _jobEc.Global.Variables.Set(Constants.Runner.Features.SnapshotPreflightImageGenPoolCheck, "true");
+
+                var snapshot = new Pipelines.Snapshot("TestImageNameForPreflightCheck");
+                var imageNameValueStringToken = new StringToken(null, null, null, snapshot.ImageName);
+                _message.Snapshot = imageNameValueStringToken;
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                    .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                var exception = await Assert.ThrowsAsync<ArgumentException>(() => jobExtension.InitializeJob(_jobEc, _message));
+                Assert.Contains("Snapshot workflows must be run a hosted runner with Image Generation enabled", exception.Message);
+            }
+
+            Environment.SetEnvironmentVariable("GITHUB_ACTIONS_IMAGE_GEN_ENABLED", null);
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task SnapshotPreflightChecks_ImageGenPoolCheck_Enabled_ImageGen_Missing_ThrowsException()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                hc.SetSingleton<ISnapshotOperationProvider>(new SnapshotOperationProvider());
+
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                _jobEc.Global.Variables.Set(Constants.Runner.Features.SnapshotPreflightImageGenPoolCheck, "true");
+
+                var snapshot = new Pipelines.Snapshot("TestImageNameForPreflightCheck");
+                var imageNameValueStringToken = new StringToken(null, null, null, snapshot.ImageName);
+                _message.Snapshot = imageNameValueStringToken;
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                    .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                var exception = await Assert.ThrowsAsync<ArgumentException>(() => jobExtension.InitializeJob(_jobEc, _message));
+                Assert.Contains("Snapshot workflows must be run a hosted runner with Image Generation enabled", exception.Message);
+            }
+
+            Environment.SetEnvironmentVariable("GITHUB_ACTIONS_IMAGE_GEN_ENABLED", null);
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task SnapshotPreflightChecks_BothChecks_Enabled_AllConditionsMet_Success()
+        {
+            Environment.SetEnvironmentVariable("GITHUB_ACTIONS_IMAGE_GEN_ENABLED", "true");
+
+            using (TestHostContext hc = CreateTestContext())
+            {
+                hc.SetSingleton<ISnapshotOperationProvider>(new SnapshotOperationProvider());
+
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                // Enable both preflight checks
+                _jobEc.Global.Variables.Set(WellKnownDistributedTaskVariables.RunnerEnvironment, "github-hosted");
+                _jobEc.Global.Variables.Set(Constants.Runner.Features.SnapshotPreflightHostedRunnerCheck, "true");
+                _jobEc.Global.Variables.Set(Constants.Runner.Features.SnapshotPreflightImageGenPoolCheck, "true");
+
+                var snapshot = new Pipelines.Snapshot("TestImageNameForPreflightCheck");
+                var imageNameValueStringToken = new StringToken(null, null, null, snapshot.ImageName);
+                _message.Snapshot = imageNameValueStringToken;
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                    .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                await jobExtension.InitializeJob(_jobEc, _message);
+
+                var postJobSteps = _jobEc.PostJobSteps;
+                Assert.Equal(1, postJobSteps.Count);
+            }
+
+            Environment.SetEnvironmentVariable("RUNNER_ENVIRONMENT", null);
+            Environment.SetEnvironmentVariable("GITHUB_ACTIONS_IMAGE_GEN_ENABLED", null);
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task DebuggerStartedInSetupJobWhenEnabled()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                // Enable debugger on the message
+                _message.EnableDebugger = true;
+                _message.DebuggerTunnel = new Pipelines.DebuggerTunnelInfo
+                {
+                    TunnelId = "test-tunnel",
+                    ClusterId = "test-cluster",
+                    HostToken = "test-token",
+                    Port = 9229
+                };
+
+                // Re-initialize the execution context so it picks up debugger config
+                _jobEc = new Runner.Worker.ExecutionContext();
+                _jobEc.Initialize(hc);
+                _jobEc.InitializeJob(_message, _tokenSource.Token);
+
+                // Set up mock debugger
+                var mockDebugger = new Mock<IDapDebugger>();
+                mockDebugger.Setup(x => x.StartAsync(It.IsAny<IExecutionContext>())).Returns(Task.CompletedTask);
+                mockDebugger.Setup(x => x.WaitUntilReadyAsync()).Returns(Task.CompletedTask);
+                hc.SetSingleton(mockDebugger.Object);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                List<IStep> result = await jobExtension.InitializeJob(_jobEc, _message);
+
+                // Verify DAP debugger was started and waited on
+                mockDebugger.Verify(x => x.StartAsync(It.IsAny<IExecutionContext>()), Times.Once);
+                mockDebugger.Verify(x => x.WaitUntilReadyAsync(), Times.Once);
+
+                // Verify steps are still returned correctly
+                Assert.Equal(5, result.Count);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task DebuggerNotStartedInSetupJobWhenDisabled()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                // Debugger NOT enabled on the message — should not be started
+
+                // Set up mock debugger (should NOT be called)
+                var mockDebugger = new Mock<IDapDebugger>();
+                hc.SetSingleton(mockDebugger.Object);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                List<IStep> result = await jobExtension.InitializeJob(_jobEc, _message);
+
+                // Verify DAP debugger was NOT started during setup job
+                mockDebugger.Verify(x => x.StartAsync(It.IsAny<IExecutionContext>()), Times.Never);
+                mockDebugger.Verify(x => x.WaitUntilReadyAsync(), Times.Never);
+
+                Assert.Equal(5, result.Count);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task DebuggerCleanedUpInFinalizeJob()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                // Enable debugger on the message
+                _message.EnableDebugger = true;
+                _message.DebuggerTunnel = new Pipelines.DebuggerTunnelInfo
+                {
+                    TunnelId = "test-tunnel",
+                    ClusterId = "test-cluster",
+                    HostToken = "test-token",
+                    Port = 9229
+                };
+
+                // Re-initialize the execution context so it picks up debugger config
+                _jobEc = new Runner.Worker.ExecutionContext();
+                _jobEc.Initialize(hc);
+                _jobEc.InitializeJob(_message, _tokenSource.Token);
+
+                // Set up mock debugger
+                var mockDebugger = new Mock<IDapDebugger>();
+                mockDebugger.Setup(x => x.StartAsync(It.IsAny<IExecutionContext>())).Returns(Task.CompletedTask);
+                mockDebugger.Setup(x => x.WaitUntilReadyAsync()).Returns(Task.CompletedTask);
+                mockDebugger.Setup(x => x.OnJobCompletedAsync()).Returns(Task.CompletedTask);
+                hc.SetSingleton(mockDebugger.Object);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                // Run InitializeJob to start the debugger
+                await jobExtension.InitializeJob(_jobEc, _message);
+
+                // Run FinalizeJob — should pause (inside OnJobCompletedAsync) then clean up
+                await jobExtension.FinalizeJob(_jobEc, _message, DateTime.UtcNow);
+
+                // Verify OnJobCompletedAsync was called (it handles pause + cleanup)
+                mockDebugger.Verify(x => x.OnJobCompletedAsync(), Times.Once);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task FinalizeJobHandlesDebuggerCleanupException()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                // Enable debugger on the message
+                _message.EnableDebugger = true;
+                _message.DebuggerTunnel = new Pipelines.DebuggerTunnelInfo
+                {
+                    TunnelId = "test-tunnel",
+                    ClusterId = "test-cluster",
+                    HostToken = "test-token",
+                    Port = 9229
+                };
+
+                // Re-initialize the execution context so it picks up debugger config
+                _jobEc = new Runner.Worker.ExecutionContext();
+                _jobEc.Initialize(hc);
+                _jobEc.InitializeJob(_message, _tokenSource.Token);
+
+                // Set up mock debugger — OnJobCompletedAsync throws
+                var mockDebugger = new Mock<IDapDebugger>();
+                mockDebugger.Setup(x => x.StartAsync(It.IsAny<IExecutionContext>())).Returns(Task.CompletedTask);
+                mockDebugger.Setup(x => x.WaitUntilReadyAsync()).Returns(Task.CompletedTask);
+                mockDebugger.Setup(x => x.OnJobCompletedAsync()).ThrowsAsync(new InvalidOperationException("tunnel disposed"));
+                mockDebugger.Setup(x => x.StopAsync()).Returns(Task.CompletedTask);
+                hc.SetSingleton(mockDebugger.Object);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                await jobExtension.InitializeJob(_jobEc, _message);
+
+                // FinalizeJob should not throw even when OnJobCompletedAsync throws
+                await jobExtension.FinalizeJob(_jobEc, _message, DateTime.UtcNow);
+
+                mockDebugger.Verify(x => x.OnJobCompletedAsync(), Times.Once);
+                mockDebugger.Verify(x => x.StopAsync(), Times.Once);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task DebuggerTunnelFailureIsReportedAsInfrastructureFailure()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                EnableDebuggerOnMessage(hc);
+
+                var mockDebugger = new Mock<IDapDebugger>();
+                mockDebugger.Setup(x => x.StartAsync(It.IsAny<IExecutionContext>()))
+                            .ThrowsAsync(new DebuggerTunnelException("Failed to connect to the debugger tunnel: relay unreachable."));
+                mockDebugger.Setup(x => x.StopAsync()).Returns(Task.CompletedTask);
+                hc.SetSingleton(mockDebugger.Object);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                await Assert.ThrowsAsync<DebuggerTunnelException>(() => jobExtension.InitializeJob(_jobEc, _message));
+
+                Assert.Equal("debugger_tunnel_failure", _jobEc.Global.InfrastructureFailureCategory);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async Task DebuggerClientConnectionTimeoutIsNotAnInfrastructureFailure()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                var jobExtension = new JobExtension();
+                jobExtension.Initialize(hc);
+
+                EnableDebuggerOnMessage(hc);
+
+                // The tunnel came up fine — the user just never attached a debug client.
+                var mockDebugger = new Mock<IDapDebugger>();
+                mockDebugger.Setup(x => x.StartAsync(It.IsAny<IExecutionContext>())).Returns(Task.CompletedTask);
+                mockDebugger.Setup(x => x.WaitUntilReadyAsync())
+                            .ThrowsAsync(new TimeoutException("No debugger client connected within 15 minutes."));
+                mockDebugger.Setup(x => x.StopAsync()).Returns(Task.CompletedTask);
+                hc.SetSingleton(mockDebugger.Object);
+
+                _actionManager.Setup(x => x.PrepareActionsAsync(It.IsAny<IExecutionContext>(), It.IsAny<IEnumerable<Pipelines.JobStep>>(), It.IsAny<Guid>()))
+                              .Returns(Task.FromResult(new PrepareResult(new List<JobExtensionRunner>(), new Dictionary<Guid, IActionRunner>())));
+
+                await Assert.ThrowsAsync<TimeoutException>(() => jobExtension.InitializeJob(_jobEc, _message));
+
+                Assert.True(string.IsNullOrEmpty(_jobEc.Global.InfrastructureFailureCategory));
+            }
+        }
+
+        private void EnableDebuggerOnMessage(TestHostContext hc)
+        {
+            _message.EnableDebugger = true;
+            _message.DebuggerTunnel = new Pipelines.DebuggerTunnelInfo
+            {
+                TunnelId = "test-tunnel",
+                ClusterId = "test-cluster",
+                HostToken = "test-token",
+                Port = 9229
+            };
+
+            // Re-initialize the execution context so it picks up debugger config
+            _jobEc = new Runner.Worker.ExecutionContext();
+            _jobEc.Initialize(hc);
+            _jobEc.InitializeJob(_message, _tokenSource.Token);
+        }
+    }
+}
