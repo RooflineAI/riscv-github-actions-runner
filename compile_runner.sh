@@ -4,15 +4,36 @@
 #
 # Must be run on a linux-riscv64 host: the downloaded .NET SDK is a
 # native riscv64 build, so it cannot execute on other architectures.
-# End result resides in runner_src/_package/.
+# End result resides in <runner source dir>/_package/. UPSTREAM_COMMIT and
+# PATCH_FINGERPRINT (written by patch_runner.sh) are copied into the package
+# root, so an installed runner records what it was built from.
 #
-# Usage: ./compile_runner.sh [Debug|Release]
+# The runner source directory is the second argument. Without it, the only
+# runner_src_* directory next to this script is used (it is an error if there
+# are several), falling back to runner_src when there is none.
+#
+# Usage: ./compile_runner.sh [Debug|Release] [runner_src_dir]
 
 set -euo pipefail
 
-RUNNER_SRC="$(dirname "${BASH_SOURCE[0]}")/runner_src"
-RUNNER_SRC="$(cd $RUNNER_SRC && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="${1:-Release}"
+RUNNER_SRC="${2:-}"
+if [[ -z "$RUNNER_SRC" ]]; then
+    shopt -s nullglob
+    candidates=("$SCRIPT_DIR"/runner_src_*/)
+    shopt -u nullglob
+    case ${#candidates[@]} in
+        0) RUNNER_SRC="$SCRIPT_DIR/runner_src" ;;
+        1) RUNNER_SRC="${candidates[0]%/}" ;;
+        *)
+            echo "Failed: several runner_src_* directories found, pass the one to build as the second argument:" >&2
+            printf '  %s\n' "${candidates[@]%/}" >&2
+            exit 1
+            ;;
+    esac
+fi
+RUNNER_SRC="$(cd "$RUNNER_SRC" && pwd)"
 
 RISCV_DOTNET_VERSION="8.0.101"
 RISCV_DOTNET_RELEASE_URL="https://github.com/dkurt/dotnet_riscv/releases/download/v${RISCV_DOTNET_VERSION}"
@@ -109,6 +130,13 @@ sed -i.tmp "s|\"version\": \".*\"|\"version\": \"${RISCV_DOTNET_VERSION}\"|" "$G
 
 heading "Build layout"
 (cd "$RUNNER_SRC/src" && ./dev.sh layout "$CONFIG" linux-riscv64)
+
+heading "Record build provenance in the layout"
+for provenance_file in UPSTREAM_COMMIT PATCH_FINGERPRINT; do
+    if [[ -f "$RUNNER_SRC/$provenance_file" ]]; then
+        cp "$RUNNER_SRC/$provenance_file" "$RUNNER_SRC/_layout/$provenance_file"
+    fi
+done
 
 heading "Package"
 (cd "$RUNNER_SRC/src" && ./dev.sh package "$CONFIG" linux-riscv64)
