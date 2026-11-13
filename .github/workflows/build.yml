@@ -1,0 +1,70 @@
+name: Build
+
+# Builds the linux-riscv64 runner on every pull request and push to main, and
+# publishes it as a release when a v<RUNNER_VERSION>-<n> tag is pushed.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag builds versions.env
+        if: github.ref_type == 'tag'
+        run: |
+          source versions.env
+          if [[ "$GITHUB_REF_NAME" != "v${RUNNER_VERSION}-"* ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match RUNNER_VERSION=${RUNNER_VERSION}; tag v${RUNNER_VERSION}-<n> instead"
+            exit 1
+          fi
+
+      - name: Cache the .NET riscv64 artifacts
+        uses: actions/cache@v4
+        with:
+          path: _downloads
+          key: dotnet-riscv-${{ hashFiles('versions.env') }}
+
+      - name: Patch upstream
+        run: |
+          source versions.env
+          ./patch_runner.sh "v${RUNNER_VERSION}" | tee patch.log
+          echo "RUNNER_SRC=$(sed -n 's/^RUNNER_SRC_DIR=//p' patch.log)" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: ./compile_runner.sh Release "$RUNNER_SRC"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: actions-runner-linux-riscv64
+          path: ${{ env.RUNNER_SRC }}/_package/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: actions-runner-linux-riscv64
+
+      # One command, so the release never exists without its asset.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          --repo "$GITHUB_REPOSITORY"
+          --title "${GITHUB_REF_NAME#v}"
+          --generate-notes
+          actions-runner-linux-riscv64-*.tar.gz
