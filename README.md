@@ -36,8 +36,8 @@ source versions.env
 ## Releases
 
 `.github/workflows/build.yml` builds on every pull request and push to `main`.
-Pushing a tag `v<RUNNER_VERSION>-<n>` (for example `v2.338.2-1`) also publishes the package as a GitHub release; `<n>` counts rebuilds of the same upstream version, such as a .NET servicing bump.
-The workflow refuses a tag that does not match `RUNNER_VERSION` in `versions.env`.
+To publish, run the **Release** workflow on `main` (Actions tab, or `gh workflow run release.yml --ref main`).
+It builds the runner pinned in `versions.env` and publishes it as release `v<RUNNER_VERSION>-<n>` (for example `v2.338.2-1`), creating the tag itself; `<n>` counts rebuilds of the same upstream version, such as a .NET servicing bump.
 
 GitHub stops sending jobs to a runner that has auto-update disabled once it falls behind the latest release for too long, so bump `RUNNER_VERSION` and tag a release when upstream ships one.
 

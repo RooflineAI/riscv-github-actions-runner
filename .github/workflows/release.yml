@@ -1,0 +1,61 @@
+name: Release
+
+# Run from main: builds the runner pinned in versions.env and publishes it as
+# release v<RUNNER_VERSION>-<n>, where <n> is one more than the last release of
+# that version. gh release create makes the tag itself, so a failed build
+# leaves no tag behind.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Two runs at once would pick the same <n>.
+concurrency: release
+
+jobs:
+  tag:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.next.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick the next release tag
+        id: next
+        run: |
+          source versions.env
+          last="$(git ls-remote --tags origin "refs/tags/v${RUNNER_VERSION}-*" \
+            | sed -nE "s|.*refs/tags/v${RUNNER_VERSION//./\\.}-([0-9]+)$|\1|p" \
+            | sort -n | tail -1)"
+          tag="v${RUNNER_VERSION}-$(( ${last:-0} + 1 ))"
+          echo "Releasing ${tag}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: tag
+    uses: ./.github/workflows/build.yml
+
+  release:
+    needs: [tag, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: actions-runner-linux-riscv64
+
+      # One command, so the release never exists without its asset.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: >-
+          gh release create "$TAG"
+          --repo "$GITHUB_REPOSITORY"
+          --target "$GITHUB_SHA"
+          --title "${TAG#v}"
+          --generate-notes
+          actions-runner-linux-riscv64-*.tar.gz
