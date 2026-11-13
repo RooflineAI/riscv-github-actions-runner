@@ -9,6 +9,7 @@ Usage:
 
 import argparse
 import pathlib
+import re
 import sys
 
 
@@ -24,6 +25,22 @@ def patch(repo: pathlib.Path, path: str, old: str, new: str, count: int = 1) -> 
         )
     p.write_text(text.replace(old, new, count))
     print(f"  patched {path}")
+
+
+def remove_package_ref(repo: pathlib.Path, path: str, name: str) -> None:
+    """Drop one <PackageReference> line, whatever version upstream pins."""
+    p = repo / path
+    pattern = re.compile(
+        rf'^[ \t]*<PackageReference Include="{re.escape(name)}" Version="[^"]*" />\n', re.M
+    )
+    text, removed = pattern.subn("", p.read_text())
+    if removed != 1:
+        sys.exit(
+            f"ERROR: expected 1 PackageReference to {name} in {path}, found {removed} "
+            f"(upstream may have dropped it; remove it from this script)"
+        )
+    p.write_text(text)
+    print(f"  removed {name} from {path}")
 
 
 def main() -> None:
@@ -127,16 +144,17 @@ def main() -> None:
             "<RuntimeIdentifiers>linux-riscv64</RuntimeIdentifiers>",
         )
 
-    # 5. NuGet.Config: local feed for the manually-built riscv64 runtime
-    #    packs (official NuGet doesn't host .NET runtime packs for
-    #    linux-riscv64).
+    # 5. NuGet.Config: local feed for the riscv64 runtime packs (official
+    #    NuGet doesn't host .NET runtime packs for linux-riscv64).
+    #    build_in_container.sh extracts them into <runner source>/packages,
+    #    which NuGet resolves relative to src/NuGet.Config.
     patch(
         repo,
         "src/NuGet.Config",
         """    <clear />
     <add key="api.nuget.org" value="https://api.nuget.org/v3/index.json" />""",
         """    <clear />
-    <add key="local" value="/home/ubuntu/packages" />
+    <add key="local" value="../packages" />
     <add key="api.nuget.org" value="https://api.nuget.org/v3/index.json" />""",
     )
 
@@ -185,6 +203,60 @@ fi
         "src/dev.sh",
         """    if [[ ("$RUNTIME_ID" != 'linux-x64') && ("$RUNTIME_ID" != 'linux-x86') && ("$RUNTIME_ID" != 'linux-arm64') && ("$RUNTIME_ID" != 'linux-arm') ]]; then""",
         """    if [[ ("$RUNTIME_ID" != 'linux-x64') && ("$RUNTIME_ID" != 'linux-x86') && ("$RUNTIME_ID" != 'linux-arm64') && ("$RUNTIME_ID" != 'linux-arm') && ("$RUNTIME_ID" != 'linux-riscv64') ]]; then""",
+    )
+
+    # 8. Retarget to .NET 10: the only .NET with maintained linux-riscv64
+    #    builds (8.0's riscv64 packs stopped at 8.0.1). Drop this step once
+    #    upstream targets net10.0 (actions/runner#4757).
+    for f in csproj_files + ["src/Test/Test.csproj"]:
+        patch(
+            repo,
+            f,
+            "<TargetFramework>net8.0</TargetFramework>",
+            "<TargetFramework>net10.0</TargetFramework>",
+        )
+
+    # 9. Remove references to packages the .NET 10 shared framework now
+    #    provides. NuGet reports each as NU1510, an error under upstream's
+    #    TreatWarningsAsErrors.
+    in_shared_framework = {
+        "src/Runner.Common/Runner.Common.csproj": [
+            "Microsoft.Win32.Registry",
+            "System.Text.Encoding.CodePages",
+            "System.Threading.Channels",
+        ],
+        "src/Runner.Listener/Runner.Listener.csproj": ["Microsoft.Win32.Registry"],
+        "src/Runner.PluginHost/Runner.PluginHost.csproj": ["System.Runtime.Loader"],
+        "src/Runner.Sdk/Runner.Sdk.csproj": [
+            "Microsoft.Win32.Registry",
+            "System.Text.Encoding.CodePages",
+            "System.Threading.Channels",
+        ],
+        "src/Runner.Worker/Runner.Worker.csproj": ["System.Threading.Channels"],
+        "src/Sdk/Sdk.csproj": [
+            "Microsoft.Win32.Registry",
+            "System.Formats.Asn1",
+            "System.Net.Http",
+            "System.Private.Uri",
+            "System.Security.Cryptography.Cng",
+            "System.Text.RegularExpressions",
+        ],
+    }
+    for f, names in in_shared_framework.items():
+        for name in names:
+            remove_package_ref(repo, f, name)
+
+    # 10. Microsoft.DevTunnels.Connections pulls in WebUtilities 8.0.25, which
+    #     NuGet audit fails (NU1903, CVE-2026-114149 / GHSA-x33c-w48q-qrgc).
+    #     Pin the patched 10.0 release directly.
+    patch(
+        repo,
+        "src/Runner.Worker/Runner.Worker.csproj",
+        "</Project>",
+        """  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.WebUtilities" Version="10.0.15" />
+  </ItemGroup>
+</Project>""",
     )
 
     print("All patches applied successfully.")
