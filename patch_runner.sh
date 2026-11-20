@@ -5,9 +5,9 @@
 # copies the patched tree into runner_src_<tag>/ next to this script.
 #
 # <tag> is <first 12 chars of the upstream commit>-<8 chars of a fingerprint
-# of the three scripts in this repo>. The same upstream commit patched by the
-# same scripts therefore always lands in the same directory, so a caller can
-# tell from the name alone whether a build for it already exists. The
+# of the build scripts and versions.env>. The same upstream commit patched and
+# built with the same inputs therefore always lands in the same directory, so
+# a caller can tell from the name alone whether a build for it already exists. The
 # directory also holds UPSTREAM_COMMIT (full upstream commit hash) and
 # PATCH_FINGERPRINT; compile_runner.sh copies both into the runner package.
 #
@@ -42,6 +42,7 @@ fi
 UPSTREAM_COMMIT="$(git -C "$REPO" rev-parse HEAD)"
 PATCH_FINGERPRINT="$(
     cat "$SCRIPT_DIR/apply_changes_for_riscv.py" "$SCRIPT_DIR/patch_runner.sh" "$SCRIPT_DIR/compile_runner.sh" \
+        "$SCRIPT_DIR/build_in_container.sh" "$SCRIPT_DIR/versions.env" \
         | { sha256sum 2>/dev/null || shasum -a 256; } \
         | cut -c1-8
 )"

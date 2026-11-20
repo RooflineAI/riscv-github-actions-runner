@@ -1,0 +1,39 @@
+name: Build
+
+# Builds the linux-riscv64 runner on every pull request and push to main.
+# release.yml calls it to build the package it publishes.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache the .NET riscv64 artifacts
+        uses: actions/cache@v4
+        with:
+          path: _downloads
+          key: dotnet-riscv-${{ hashFiles('versions.env') }}
+
+      - name: Patch upstream
+        run: |
+          source versions.env
+          ./patch_runner.sh "v${RUNNER_VERSION}" | tee patch.log
+          echo "RUNNER_SRC=$(sed -n 's/^RUNNER_SRC_DIR=//p' patch.log)" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: ./compile_runner.sh Release "$RUNNER_SRC"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: actions-runner-linux-riscv64
+          path: ${{ env.RUNNER_SRC }}/_package/*.tar.gz
+          if-no-files-found: error
