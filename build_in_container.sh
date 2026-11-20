@@ -2,7 +2,8 @@
 #
 # Runs inside the .NET SDK image; see compile_runner.sh. Expects the patched
 # runner source at /runner, a download cache at /downloads, and CONFIG plus the
-# DOTNET_RISCV_* variables from versions.env in the environment.
+# DOTNET_RISCV_* and NODE24_RISCV_VERSION variables from versions.env in the
+# environment.
 #
 # Replaces dev.sh's layout and package steps rather than calling them: dev.sh
 # would install its own (non-riscv64-aware) SDK version instead of the image's.
