@@ -160,7 +160,8 @@ def main() -> None:
 
     # 6. externals.sh: fetch Node for riscv64 from the unofficial Node.js
     #    builds (there's no official nodejs.org riscv64 build for these
-    #    versions).
+    #    versions). Node 24 comes from NODE24_RISCV_VERSION in versions.env
+    #    rather than upstream's NODE24_VERSION; see the comment there.
     patch(
         repo,
         "src/Misc/externals.sh",
@@ -180,7 +181,7 @@ fi
 
 if [[ "$PACKAGERUNTIME" == "linux-riscv64" ]]; then
     acquireExternalTool "$UNOFFICIAL_NODE_URL/v${NODE20_VERSION}/node-v${NODE20_VERSION}-linux-riscv64.tar.gz" node20 fix_nested_dir
-    acquireExternalTool "$UNOFFICIAL_NODE_URL/v${NODE24_VERSION}/node-v${NODE24_VERSION}-linux-riscv64.tar.gz" node24 fix_nested_dir
+    acquireExternalTool "$UNOFFICIAL_NODE_URL/v${NODE24_RISCV_VERSION:?set in versions.env}/node-v${NODE24_RISCV_VERSION}-linux-riscv64.tar.gz" node24 fix_nested_dir
 fi
 """,
     )

@@ -51,6 +51,7 @@ docker run --rm --user "$(id -u):$(id -g)" \
     -v "$SCRIPT_DIR/build_in_container.sh:/build_in_container.sh:ro" \
     -e CONFIG="$CONFIG" \
     -e DOTNET_RISCV_RELEASE -e DOTNET_RISCV_ARTIFACTS -e DOTNET_RISCV_ARTIFACTS_SHA256 \
+    -e NODE24_RISCV_VERSION \
     "mcr.microsoft.com/dotnet/sdk:${DOTNET_SDK_VERSION}" \
     bash /build_in_container.sh
 

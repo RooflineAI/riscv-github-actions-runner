@@ -10,7 +10,7 @@ The resulting binaries need glibc 2.38 or newer on the board (Ubuntu 24.04 or la
 
 ## Versions
 
-`versions.env` pins every build input: the upstream runner tag, the .NET SDK image, and the `dotnet-riscv` release with the sha256 of its artifacts.
+`versions.env` pins every build input: the upstream runner tag, the .NET SDK image, the `dotnet-riscv` release with the sha256 of its artifacts, and the riscv64 Node 24 build, which can lag upstream's Node 24 when a newer riscv64 build is broken.
 Bumping any pin changes `PATCH_FINGERPRINT`, so a build always records exactly what went into it.
 The SDK must ship the same runtime version as the riscv64 packs; the build stops with a message naming both if they differ.
 
