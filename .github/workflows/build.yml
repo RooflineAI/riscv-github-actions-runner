@@ -23,11 +23,16 @@ jobs:
           path: _downloads
           key: dotnet-riscv-${{ hashFiles('versions.env') }}
 
+      # shell: bash adds pipefail, so a patch failure is not masked by tee.
       - name: Patch upstream
+        shell: bash
         run: |
           source versions.env
           ./patch_runner.sh "v${RUNNER_VERSION}" | tee patch.log
-          echo "RUNNER_SRC=$(sed -n 's/^RUNNER_SRC_DIR=//p' patch.log)" >> "$GITHUB_ENV"
+          runner_src="$(sed -n 's/^RUNNER_SRC_DIR=//p' patch.log)"
+          # Empty would make compile_runner.sh fall back to the stale runner_src/.
+          [[ -n "$runner_src" ]] || { echo "::error::patch_runner.sh printed no RUNNER_SRC_DIR"; exit 1; }
+          echo "RUNNER_SRC=${runner_src}" >> "$GITHUB_ENV"
 
       - name: Build
         run: ./compile_runner.sh Release "$RUNNER_SRC"
